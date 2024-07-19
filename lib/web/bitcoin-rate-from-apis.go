@@ -27,6 +27,7 @@ type BinanceResponse struct {
 	Price string `json:"price"`
 }
 
+// TODO: Merge the two CoinGecko fetching functions into one
 func fetchCoinGeckoPrice() (float64, error) {
 	resp, err := http.Get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd")
 	if err != nil {
