@@ -19,6 +19,9 @@ type CoinGeckoResponse struct {
 		USD float64 `json:"usd"`
 	} `json:"bitcoin"`
 }
+type CoinGeckoFiatResponse struct {
+	Bitcoin map[string]float64 `json:"bitcoin"`
+}
 
 type BinanceResponse struct {
 	Price string `json:"price"`
@@ -43,6 +46,33 @@ func fetchCoinGeckoPrice() (float64, error) {
 	}
 
 	return result.Bitcoin.USD, nil
+}
+func fetchCoinPriceByFiat(fiat string) (float64, error) {
+	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=%s", fiat)
+	resp, err := http.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	var result CoinGeckoFiatResponse
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return 0, err
+	}
+
+	price, exists := result.Bitcoin[fiat]
+	if !exists {
+		return 0, fmt.Errorf("fiat currency %s not found in response", fiat)
+	}
+	fmt.Println("Price of Bitcoin in", fiat, ":", price)
+
+	return price, nil
 }
 
 func fetchBinancePrice() (float64, error) {
