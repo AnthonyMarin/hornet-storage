@@ -11,6 +11,7 @@ import (
 
 	types "github.com/HORNET-Storage/hornet-storage/lib"
 	"github.com/HORNET-Storage/hornet-storage/lib/stores/graviton"
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -75,7 +76,29 @@ func fetchCoinPriceByFiat(fiat string) (float64, error) {
 
 	return price, nil
 }
+func handleBitcoinPriceByCurrency(c *fiber.Ctx) error {
+	// Get the currency parameter from the route
+	currency := c.Params("currency")
+	if currency == "" {
+		return c.Status(fiber.StatusBadRequest).SendString("Currency parameter is required")
+	}
 
+	// Validate the currency
+	if !isValidCurrency(currency) {
+		return c.Status(fiber.StatusBadRequest).SendString("Invalid currency")
+	}
+
+	price, err := fetchCoinPriceByFiat(currency)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"price": price,
+	})
+}
 func fetchBinancePrice() (float64, error) {
 	resp, err := http.Get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
 	if err != nil {

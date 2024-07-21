@@ -35,6 +35,7 @@ func StartServer() error {
 	app.Get("/balance/usd", handleBalanceInUSD)
 	app.Get("/transactions/latest", handleLatestTransactions)
 	app.Get("/bitcoin-rates/last-30-days", handleBitcoinRatesForLast30Days)
+	app.Get("/bitcoin-rates/last-30-days/:currency", handleBitcoinRatesForLast30DaysByCurrency)
 	app.Post("/addresses", handleAddresses)
 	app.Get("/addresses", getAddresses)
 	app.Post("/signup", handleSignUp)
@@ -43,6 +44,7 @@ func StartServer() error {
 	app.Get("/user-exist", userExist)
 	app.Get("/api/kinds", handleKindData)
 	app.Get("/api/kind-trend/:kindNumber", handleKindTrendData)
+	app.Get("/bitcoin-price/:currency", handleBitcoinPriceByCurrency)
 
 	port := viper.GetString("port")
 	p, err := strconv.Atoi(port)
