@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	types "github.com/HORNET-Storage/hornet-storage/lib"
@@ -15,11 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type CoinGeckoResponse struct {
-	Bitcoin struct {
-		USD float64 `json:"usd"`
-	} `json:"bitcoin"`
-}
 type CoinGeckoFiatResponse struct {
 	Bitcoin map[string]float64 `json:"bitcoin"`
 }
@@ -28,54 +24,33 @@ type BinanceResponse struct {
 	Price string `json:"price"`
 }
 
-// TODO: Merge the two CoinGecko fetching functions into one
-func fetchCoinGeckoPrice() (float64, error) {
-	resp, err := http.Get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd")
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, err
-	}
-
-	var result CoinGeckoResponse
-	err = json.Unmarshal(body, &result)
-	if err != nil {
-		return 0, err
-	}
-
-	return result.Bitcoin.USD, nil
-}
-func fetchCoinPriceByFiat(fiat string) (float64, error) {
-	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=%s", fiat)
+func fetchCoinPricesByFiats(fiats []string) (map[string]float64, error) {
+	fiatList := strings.Join(fiats, ",")
+	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=%s", fiatList)
 	resp, err := http.Get(url)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	var result CoinGeckoFiatResponse
 	err = json.Unmarshal(body, &result)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	price, exists := result.Bitcoin[fiat]
-	if !exists {
-		return 0, fmt.Errorf("fiat currency %s not found in response", fiat)
+	if result.Bitcoin == nil {
+		return nil, fmt.Errorf("no data found in CoinGecko response")
 	}
-	fmt.Println("Price of Bitcoin in", fiat, ":", price)
 
-	return price, nil
+	return result.Bitcoin, nil
 }
+
 func handleBitcoinPriceByCurrency(c *fiber.Ctx) error {
 	// Get the currency parameter from the route
 	currency := c.Params("currency")
@@ -88,7 +63,7 @@ func handleBitcoinPriceByCurrency(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).SendString("Invalid currency")
 	}
 
-	price, err := fetchCoinPriceByFiat(currency)
+	price, err := fetchCoinPricesByFiats([]string{currency})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
@@ -125,25 +100,58 @@ func fetchBinancePrice() (float64, error) {
 	return price, nil
 }
 
-func fetchBitcoinPrice(apiIndex int) (float64, int, error) {
-	apis := []func() (float64, error){
-		fetchCoinGeckoPrice,
-		fetchBinancePrice,
-	}
-
-	for i := 0; i < len(apis); i++ {
-		index := (apiIndex + i) % len(apis)
-		price, err := apis[index]()
-		if err == nil {
-			return price, (index + 1) % len(apis), nil
+/*
+	 func fetchBitcoinPrice(apiIndex int) (float64, int, error) {
+		apis := []func() (float64, error){
+			fetchCoinGeckoPrice,
+			fetchBinancePrice,
 		}
-		fmt.Println("Error fetching price from API", index, ":", err)
+
+		for i := 0; i < len(apis); i++ {
+			index := (apiIndex + i) % len(apis)
+			price, err := apis[index]()
+			if err == nil {
+				return price, (index + 1) % len(apis), nil
+			}
+			fmt.Println("Error fetching price from API", index, ":", err)
+		}
+
+		return 0, apiIndex, fmt.Errorf("all API calls failed")
+	}
+*/
+func pullBitcoinPrices() {
+	// Define supported currencies
+	supportedCurrencies := []string{"usd", "eur", "gbp", "jpy", "aud", "cad", "chf"}
+
+	// Fetch the initial Bitcoin rates immediately
+	prices, err := fetchCoinPricesByFiats(supportedCurrencies)
+	if err != nil {
+		fmt.Println("Error fetching initial prices:", err)
+	} else {
+		for currency, price := range prices {
+			fmt.Printf("Initial Bitcoin Price in %s: $%.2f\n", currency, price)
+			saveBitcoinRate(currency, price)
+		}
 	}
 
-	return 0, apiIndex, fmt.Errorf("all API calls failed")
+	// Set up the ticker for subsequent fetches
+	ticker := time.NewTicker(7 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		prices, err := fetchCoinPricesByFiats(supportedCurrencies)
+		if err != nil {
+			fmt.Println("Error fetching prices:", err)
+		} else {
+			for currency, price := range prices {
+				fmt.Printf("Bitcoin Price in %s: $%.2f\n", currency, price)
+				saveBitcoinRate(currency, price)
+			}
+		}
+	}
 }
 
-func pullBitcoinPrice() {
+/* func pullBitcoinPrice() {
 	// Fetch the initial Bitcoin rate immediately
 	apiIndex := 0
 	price, newIndex, err := fetchBitcoinPrice(apiIndex)
@@ -170,18 +178,16 @@ func pullBitcoinPrice() {
 		}
 	}
 }
-
-func saveBitcoinRate(rate float64) {
-	// Initialize the Gorm database
+*/
+/* func saveBitcoinRate(currency string, rate float64) {
 	db, err := graviton.InitGorm()
 	if err != nil {
 		log.Printf("Failed to connect to the database: %v", err)
 		return
 	}
 
-	// Query the latest Bitcoin rate
 	var latestBitcoinRate types.BitcoinRate
-	result := db.Order("timestamp desc").First(&latestBitcoinRate)
+	result := db.Where("currency = ?", currency).Order("timestamp desc").First(&latestBitcoinRate)
 
 	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
 		log.Printf("Error querying bitcoin rate: %v", result.Error)
@@ -189,14 +195,13 @@ func saveBitcoinRate(rate float64) {
 	}
 
 	if result.Error == nil && latestBitcoinRate.Rate == rate {
-		// If the rate is the same as the latest entry, no update needed
 		fmt.Println("Rate is the same as the latest entry, no update needed")
 		return
 	}
 
-	// Add the new rate
 	newRate := types.BitcoinRate{
 		Rate:      rate,
+		Currency:  currency,
 		Timestamp: time.Now(),
 	}
 	if err := db.Create(&newRate).Error; err != nil {
@@ -204,5 +209,38 @@ func saveBitcoinRate(rate float64) {
 		return
 	}
 
-	fmt.Println("Bitcoin rate updated successfully")
+	fmt.Println("Bitcoin rate updated successfully for currency", currency)
+} */
+
+func saveBitcoinRate(currency string, rate float64) {
+	db, err := graviton.InitGorm()
+	if err != nil {
+		log.Printf("Failed to connect to the database: %v", err)
+		return
+	}
+
+	var latestBitcoinRate types.BitcoinRate
+	result := db.Where("currency = ?", currency).Order("timestamp desc").First(&latestBitcoinRate)
+
+	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+		log.Printf("Error querying bitcoin rate: %v", result.Error)
+		return
+	}
+
+	if result.Error == nil && latestBitcoinRate.Rate == rate {
+		fmt.Println("Rate is the same as the latest entry, no update needed")
+		return
+	}
+
+	newRate := types.BitcoinRate{
+		Rate:      rate,
+		Currency:  currency,
+		Timestamp: time.Now(),
+	}
+	if err := db.Create(&newRate).Error; err != nil {
+		log.Printf("Error saving new rate: %v", err)
+		return
+	}
+
+	fmt.Println("Bitcoin rate updated successfully for currency", currency)
 }

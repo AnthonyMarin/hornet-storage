@@ -153,7 +153,8 @@ type WalletAddress struct {
 type BitcoinRate struct {
 	ID        uint      `gorm:"primaryKey"`
 	Rate      float64   `gorm:"not null"`
-	Timestamp time.Time `gorm:"autoUpdateTime"` // This will be updated each time the rate changes
+	Timestamp time.Time `gorm:"autoUpdateTime"`         // This will be updated each time the rate changes
+	Currency  string    `gorm:"default:'usd';not null"` // Set default value to 'usd'
 }
 
 type RelaySettings struct {

@@ -15,7 +15,7 @@ import (
 func StartServer() error {
 	app := fiber.New()
 
-	go pullBitcoinPrice()
+	go pullBitcoinPrices()
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
@@ -32,7 +32,7 @@ func StartServer() error {
 	app.Post("/balance", handleBalance) // Add the new route here
 	app.Post("/transactions", handleTransactions)
 	app.Post("/updateRate", handleBitcoinRate)
-	app.Get("/balance/usd", handleBalanceInUSD)
+	app.Get("/balance/:currency", handleBalanceByCurrency)
 	app.Get("/transactions/latest", handleLatestTransactions)
 	app.Get("/bitcoin-rates/last-30-days", handleBitcoinRatesForLast30Days)
 	app.Get("/bitcoin-rates/last-30-days/:currency", handleBitcoinRatesForLast30DaysByCurrency)
