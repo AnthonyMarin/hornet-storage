@@ -75,8 +75,6 @@ func handleBitcoinRatesForLast30DaysByCurrency(c *fiber.Ctx) error {
 
 // isValidCurrency checks if the given currency is supported
 func isValidCurrency(currency string) bool {
-	// Implement currency validation logic here
-	// For example, check against a list of supported currencies
 	supportedCurrencies := []string{"usd", "eur", "gbp", "jpy", "aud", "cad", "chf"}
 	for _, c := range supportedCurrencies {
 		if c == currency {

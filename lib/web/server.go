@@ -44,7 +44,6 @@ func StartServer() error {
 	app.Get("/user-exist", userExist)
 	app.Get("/api/kinds", handleKindData)
 	app.Get("/api/kind-trend/:kindNumber", handleKindTrendData)
-	app.Get("/bitcoin-price/:currency", handleBitcoinPriceByCurrency)
 
 	port := viper.GetString("port")
 	p, err := strconv.Atoi(port)
