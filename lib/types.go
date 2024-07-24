@@ -142,6 +142,7 @@ type WalletTransactions struct {
 	Date    time.Time `gorm:"not null"` // Date and time formatted like "2024-05-23 19:17:22"
 	Output  string    `gorm:"not null"` // Output as a string
 	Value   string    `gorm:"not null"` // Value as a float
+	Sats    int64     `json:"sats"`     // Satoshi value as an int64
 }
 
 type WalletAddress struct {

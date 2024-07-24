@@ -46,7 +46,7 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 		}
 	}
 
-	// Process each transaction to convert the value to USD
+	// Process each transaction to convert the value to USD and add Satoshi value
 	for i, transaction := range transactions {
 		satoshis, err := strconv.ParseInt(transaction.Value, 10, 64)
 		if err != nil {
@@ -55,7 +55,8 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 				"error": "Conversion error",
 			})
 		}
-		transactions[i].Value = fmt.Sprintf("%.2f", satoshiToUSD(bitcoinRate.Rate, satoshis))
+		transactions[i].Value = fmt.Sprintf("%.2f", satoshiToUSD(bitcoinRate.Rate, satoshis)) //Value in USD
+		transactions[i].Sats = satoshis                                                       //Value in Satoshi
 	}
 
 	// Respond with the transactions
