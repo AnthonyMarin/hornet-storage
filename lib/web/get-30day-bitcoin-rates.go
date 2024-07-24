@@ -71,10 +71,32 @@ func handleBitcoinRatesForLast30DaysByCurrency(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if any data exists for the last 30 days
-	if len(bitcoinRates) < 3 {
-		// No data exists, fetch historical prices from CoinGecko
-		missingRates, err := fetchMissingHistoricalPrices(currency, nil)
+	// Check for missing or outdated data
+	latestDate := time.Time{}
+	existingDates := make(map[string]bool)
+	for _, rate := range bitcoinRates {
+		dateStr := rate.Timestamp.Format("2006-01-02")
+		existingDates[dateStr] = true
+		if rate.Timestamp.After(latestDate) {
+			latestDate = rate.Timestamp
+		}
+	}
+
+	// Check if data is missing or outdated
+	today := time.Now().Format("2006-01-02")
+	dataIsOutdated := latestDate.Format("2006-01-02") != today
+	dataIsIncomplete := false
+	for i := 0; i < 30; i++ {
+		date := time.Now().AddDate(0, 0, -i).Format("2006-01-02")
+		if !existingDates[date] {
+			dataIsIncomplete = true
+			break
+		}
+	}
+
+	if dataIsOutdated || dataIsIncomplete {
+		// Fetch historical prices from CoinGecko
+		missingRates, err := fetchMissingHistoricalPrices(currency, existingDates)
 		if err != nil {
 			log.Printf("Error fetching historical prices: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -82,10 +104,9 @@ func handleBitcoinRatesForLast30DaysByCurrency(c *fiber.Ctx) error {
 			})
 		}
 
-		// Save fetched historical prices to the database
 		saveBitcoinRates(missingRates)
 
-		// Combine the newly fetched rates
+		// Combine the existing and newly fetched rates
 		bitcoinRates = append(bitcoinRates, missingRates...)
 	}
 
