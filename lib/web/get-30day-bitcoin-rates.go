@@ -2,6 +2,7 @@ package web
 
 import (
 	"log"
+	"sort"
 	"time"
 
 	types "github.com/HORNET-Storage/hornet-storage/lib"
@@ -34,6 +35,7 @@ func handleBitcoinRatesForLast30Days(c *fiber.Ctx) error {
 	// Respond with the Bitcoin rates
 	return c.JSON(bitcoinRates)
 }
+
 func handleBitcoinRatesForLast30DaysByCurrency(c *fiber.Ctx) error {
 	// Initialize the Gorm database
 	db, err := graviton.InitGorm()
@@ -48,7 +50,7 @@ func handleBitcoinRatesForLast30DaysByCurrency(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).SendString("Currency parameter is required")
 	}
 
-	// Validate the currency (optional)
+	// Validate the currency
 	if !isValidCurrency(currency) {
 		return c.Status(fiber.StatusBadRequest).SendString("Invalid currency")
 	}
@@ -68,6 +70,29 @@ func handleBitcoinRatesForLast30DaysByCurrency(c *fiber.Ctx) error {
 			"error": "Database query error",
 		})
 	}
+
+	// Check if any data exists for the last 30 days
+	if len(bitcoinRates) < 3 {
+		// No data exists, fetch historical prices from CoinGecko
+		missingRates, err := fetchMissingHistoricalPrices(currency, nil)
+		if err != nil {
+			log.Printf("Error fetching historical prices: %v", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Error fetching historical prices",
+			})
+		}
+
+		// Save fetched historical prices to the database
+		saveBitcoinRates(missingRates)
+
+		// Combine the newly fetched rates
+		bitcoinRates = append(bitcoinRates, missingRates...)
+	}
+
+	// Sort the rates by timestamp
+	sort.Slice(bitcoinRates, func(i, j int) bool {
+		return bitcoinRates[i].Timestamp.Before(bitcoinRates[j].Timestamp)
+	})
 
 	// Respond with the Bitcoin rates
 	return c.JSON(bitcoinRates)

@@ -244,3 +244,61 @@ func saveBitcoinRate(currency string, rate float64) {
 
 	fmt.Println("Bitcoin rate updated successfully for currency", currency)
 }
+func saveBitcoinRates(rates []types.BitcoinRate) {
+	db, err := graviton.InitGorm()
+	if err != nil {
+		log.Printf("Failed to connect to the database: %v", err)
+		return
+	}
+
+	for _, rate := range rates {
+		if err := db.Create(&rate).Error; err != nil {
+			log.Printf("Error saving rate for %s on %s: %v", rate.Currency, rate.Timestamp.Format("2006-01-02"), err)
+		} else {
+		}
+	}
+}
+
+type CoinGeckoHistoricalResponse struct {
+	Prices [][]float64 `json:"prices"`
+}
+
+// fetchMissingHistoricalPrices fetches the historical prices from CoinGecko that are not in the existingDates map
+func fetchMissingHistoricalPrices(fiat string, existingDates map[string]bool) ([]types.BitcoinRate, error) {
+	url := fmt.Sprintf("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=%s&days=30", fiat)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result CoinGeckoHistoricalResponse
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	if result.Prices == nil {
+		return nil, fmt.Errorf("no data found in CoinGecko response")
+	}
+
+	var missingRates []types.BitcoinRate
+	for _, priceData := range result.Prices {
+		timestamp := time.Unix(int64(priceData[0])/1000, 0)
+		dateStr := timestamp.Format("2006-01-02")
+		if !existingDates[dateStr] {
+			missingRates = append(missingRates, types.BitcoinRate{
+				Rate:      priceData[1],
+				Currency:  fiat,
+				Timestamp: timestamp,
+			})
+		}
+	}
+
+	return missingRates, nil
+}
