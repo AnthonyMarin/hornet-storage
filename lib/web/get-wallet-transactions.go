@@ -11,6 +11,11 @@ import (
 	"gorm.io/gorm"
 )
 
+type TransactionResponse struct {
+	types.WalletTransactions
+	Sats int64 `json:"sats"`
+}
+
 func handleLatestTransactions(c *fiber.Ctx) error {
 	// Initialize the Gorm database
 	db, err := graviton.InitGorm()
@@ -32,7 +37,7 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 
 	// Get the latest Bitcoin rate
 	var bitcoinRate types.BitcoinRate
-	result = db.Order("timestamp desc").First(&bitcoinRate)
+	result = db.Where("currency = ?", "usd").Order("timestamp desc").First(&bitcoinRate)
 
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
@@ -45,9 +50,9 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 			})
 		}
 	}
-
+	var responseTransactions []TransactionResponse
 	// Process each transaction to convert the value to USD and add Satoshi value
-	for i, transaction := range transactions {
+	for _, transaction := range transactions {
 		satoshis, err := strconv.ParseInt(transaction.Value, 10, 64)
 		if err != nil {
 			log.Printf("Error converting value to int64: %v", err)
@@ -55,10 +60,16 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 				"error": "Conversion error",
 			})
 		}
-		transactions[i].Value = fmt.Sprintf("%.2f", satoshiToUSD(bitcoinRate.Rate, satoshis)) //Value in USD
-		transactions[i].Sats = satoshis                                                       //Value in Satoshi
+
+		responseTransaction := TransactionResponse{
+			WalletTransactions: transaction,
+			Sats:               satoshis,
+		}
+
+		responseTransaction.Value = fmt.Sprintf("%.2f", satoshiToUSD(bitcoinRate.Rate, satoshis))
+		responseTransactions = append(responseTransactions, responseTransaction)
 	}
 
 	// Respond with the transactions
-	return c.JSON(transactions)
+	return c.JSON(responseTransactions)
 }
