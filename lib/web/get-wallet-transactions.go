@@ -50,26 +50,19 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 			})
 		}
 	}
-	var responseTransactions []TransactionResponse
-	// Process each transaction to convert the value to USD and add Satoshi value
-	for _, transaction := range transactions {
-		satoshis, err := strconv.ParseInt(transaction.Value, 64)
+
+	// Process each transaction to convert the value to USD
+	for i, transaction := range transactions {
+		value, err := strconv.ParseFloat(transaction.Value, 64)
 		if err != nil {
 			log.Printf("Error converting value to float64: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Conversion error",
 			})
 		}
-
-		responseTransaction := TransactionResponse{
-			WalletTransactions: transaction,
-			Sats:               satoshis,
-		}
-
-		responseTransaction.Value = fmt.Sprintf("%.2f", satoshiToUSD(bitcoinRate.Rate, satoshis))
-		responseTransactions = append(responseTransactions, responseTransaction)
+		transactions[i].Value = fmt.Sprintf("%.8f", value)
 	}
 
 	// Respond with the transactions
-	return c.JSON(responseTransactions)
+	return c.JSON(transactions)
 }
