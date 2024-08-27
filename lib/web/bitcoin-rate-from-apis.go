@@ -96,8 +96,7 @@ func fetchMempoolPrice(fiats []string) (map[string]float64, error) {
 		case "jpy":
 			prices["jpy"] = result.JPY
 		default:
-			// If a fiat currency is not in the response, you might want to handle it
-			// e.g., prices[fiat] = 0 or return an error
+			return nil, fmt.Errorf("unsupported currency: %s", fiat)
 		}
 	}
 
