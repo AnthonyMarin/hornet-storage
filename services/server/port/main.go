@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	merkle_dag "github.com/HORNET-Storage/scionic-merkletree/dag"
+	"github.com/joho/godotenv"
 
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/fsnotify/fsnotify"
@@ -17,9 +22,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/protocol"
 
-	//"github.com/libp2p/go-libp2p/p2p/security/noise"
-	//libp2ptls "github.com/libp2p/go-libp2p/p2p/security/tls"
+	fiber_websocket "github.com/gofiber/contrib/websocket"
 
+	"github.com/HORNET-Storage/hornet-storage/lib/sessions/libp2p/middleware"
 	"github.com/HORNET-Storage/hornet-storage/lib/signing"
 	"github.com/HORNET-Storage/hornet-storage/lib/transports/libp2p"
 	"github.com/HORNET-Storage/hornet-storage/lib/transports/websocket"
@@ -67,6 +72,13 @@ func init() {
 	viper.SetDefault("relay_stats_db", "relay_stats.db")
 	viper.SetDefault("query_cache", map[string]string{})
 	viper.SetDefault("service_tag", "hornet-storage-service")
+	viper.SetDefault("RelayName", "HORNETS")
+	viper.SetDefault("RelayDescription", "The best relay ever.")
+	viper.SetDefault("RelayPubkey", "")
+	viper.SetDefault("RelayContact", "support@hornets.net")
+	viper.SetDefault("RelaySoftware", "golang")
+	viper.SetDefault("RelayVersion", "0.0.1")
+	viper.SetDefault("RelayDHTkey", "")
 
 	viper.AddConfigPath(".")
 	viper.SetConfigType("json")
@@ -85,6 +97,8 @@ func init() {
 }
 
 func main() {
+	ctx := context.Background()
+
 	wg := new(sync.WaitGroup)
 
 	// Private key
@@ -98,12 +112,43 @@ func main() {
 	queryCache := viper.GetStringMapString("query_cache")
 	store.InitStore(queryCache)
 
+	// generate server priv key if it does not exist
+	err := generateAndSaveNostrPrivateKey()
+	if err != nil {
+		log.Printf("error generating or saving server private key")
+	}
+
+	err = godotenv.Load(envFile)
+	if err != nil {
+		log.Printf("error loading .env file: %s", err)
+		return
+	}
+
+	// load keys from environment for signing kind 411
+	privKey, pubKey, err := loadSecp256k1Keys()
+	if err != nil {
+		log.Printf("error loading keys from environment. check if you have the key in the environment: %s", err)
+		return
+	}
+	// Create dht key for using relay private key and set it on viper.
+	_, _, err = generateEd25519Keypair(os.Getenv("NOSTR_PRIVATE_KEY"))
+	if err != nil {
+		log.Printf("error generating dht-key: %s", err)
+		return
+	}
+
+	// Create and store kind 411 event
+	if err := createKind411Event(privKey, pubKey, store); err != nil {
+		log.Printf("Failed to create kind 411 event: %v", err)
+		return
+	}
+
 	// Stream Handlers
 	download.AddDownloadHandler(host, store, func(rootLeaf *merkle_dag.DagLeaf, pubKey *string, signature *string) bool {
 		return true
 	})
 
-	upload.AddUploadHandler(host, store, func(rootLeaf *merkle_dag.DagLeaf, pubKey *string, signature *string) bool {
+	canUpload := func(rootLeaf *merkle_dag.DagLeaf, pubKey *string, signature *string) bool {
 		decodedSignature, err := hex.DecodeString(*signature)
 		if err != nil {
 			return false
@@ -126,7 +171,11 @@ func main() {
 
 		err = signing.VerifyCIDSignature(parsedSignature, cid, publicKey)
 		return err == nil
-	}, func(dag *merkle_dag.Dag, pubKey *string) {})
+	}
+
+	handleUpload := func(dag *merkle_dag.Dag, pubKey *string) {}
+
+	upload.AddUploadHandlerForLibp2p(ctx, host, store, canUpload, handleUpload)
 
 	query.AddQueryHandler(host, store)
 
@@ -198,7 +247,7 @@ func main() {
 			stream.Close()
 		}
 
-		host.SetStreamHandler(protocol.ID("/nostr/event/"+kind), wrapper)
+		host.SetStreamHandler(protocol.ID("/nostr/event/"+kind), middleware.SessionMiddleware(host)(wrapper))
 	}
 
 	// Web Panel
@@ -225,7 +274,11 @@ func main() {
 		fmt.Println("Starting with legacy nostr proxy web server enabled")
 
 		go func() {
-			err := websocket.StartServer(store)
+			app := websocket.BuildServer(store)
+
+			app.Get("/scionic/upload", fiber_websocket.New(upload.AddUploadHandlerForWebsockets(store, canUpload, handleUpload)))
+
+			err := websocket.StartServer(app)
 
 			if err != nil {
 				fmt.Println("Fatal error occurred in web server")
@@ -234,6 +287,15 @@ func main() {
 			wg.Done()
 		}()
 	}
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigs
+
+		os.Exit(0)
+	}()
 
 	fmt.Printf("Host started with id: %s\n", host.ID())
 	fmt.Printf("Host started with address: %s\n", host.Addrs())

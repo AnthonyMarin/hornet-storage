@@ -16,6 +16,8 @@ import (
 	"gorm.io/gorm"
 )
 
+var supportedCurrencies = []string{"usd", "eur", "gbp", "jpy", "aud", "cad", "chf"}
+
 type CoinGeckoFiatResponse struct {
 	Bitcoin map[string]float64 `json:"bitcoin"`
 }
@@ -24,7 +26,19 @@ type BinanceResponse struct {
 	Price string `json:"price"`
 }
 
-func fetchCoinPricesByFiats(fiats []string) (map[string]float64, error) {
+type MempoolResponse struct {
+	Time int64   `json:"time"`
+	USD  float64 `json:"USD"`
+	EUR  float64 `json:"EUR"`
+	GBP  float64 `json:"GBP"`
+	CAD  float64 `json:"CAD"`
+	CHF  float64 `json:"CHF"`
+	AUD  float64 `json:"AUD"`
+	JPY  float64 `json:"JPY"`
+}
+
+// / API CALLS
+func fetchCoinGeckoPrices(fiats []string) (map[string]float64, error) {
 	fiatList := strings.Join(fiats, ",")
 	url := fmt.Sprintf("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=%s", fiatList)
 	resp, err := http.Get(url)
@@ -32,7 +46,6 @@ func fetchCoinPricesByFiats(fiats []string) (map[string]float64, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -50,7 +63,94 @@ func fetchCoinPricesByFiats(fiats []string) (map[string]float64, error) {
 
 	return result.Bitcoin, nil
 }
+func fetchMempoolPrice(fiats []string) (map[string]float64, error) {
+	resp, err := http.Get("https://mempool.space/api/v1/prices")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var result MempoolResponse
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return nil, err
+	}
+	prices := make(map[string]float64)
+	for _, fiat := range fiats {
+		switch fiat {
+		case "usd":
+			prices["usd"] = result.USD
+		case "eur":
+			prices["eur"] = result.EUR
+		case "gbp":
+			prices["gbp"] = result.GBP
+		case "cad":
+			prices["cad"] = result.CAD
+		case "chf":
+			prices["chf"] = result.CHF
+		case "aud":
+			prices["aud"] = result.AUD
+		case "jpy":
+			prices["jpy"] = result.JPY
+		default:
+			// If a fiat currency is not in the response, you might want to handle it
+			// e.g., prices[fiat] = 0 or return an error
+		}
+	}
 
+	return prices, nil
+
+}
+func fetchBinancePrice() (map[string]float64, error) {
+	resp, err := http.Get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var result BinanceResponse
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		return nil, err
+	}
+
+	price, err := strconv.ParseFloat(result.Price, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	// Return the price in a map with the key "usd"
+	return map[string]float64{
+		"usd": price,
+	}, nil
+}
+
+/// API CALLS ^^
+
+func fetchBitcoinPrice(apiIndex int, fiats []string) (map[string]float64, int, error) {
+	apis := []func(fiats []string) (map[string]float64, error){
+		fetchCoinGeckoPrices,
+		//	fetchBinancePrice,
+		fetchMempoolPrice,
+	}
+	for i := 0; i < len(apis); i++ {
+		index := (apiIndex + i) % len(apis)
+		price, err := apis[index](fiats)
+		if err == nil {
+			return price, (index + 1) % len(apis), nil
+		}
+	}
+
+	return nil, apiIndex, fmt.Errorf("all API calls failed")
+
+}
 func handleBitcoinPriceByCurrency(c *fiber.Ctx) error {
 	// Get the currency parameter from the route
 	currency := c.Params("currency")
@@ -63,7 +163,7 @@ func handleBitcoinPriceByCurrency(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).SendString("Invalid currency")
 	}
 
-	price, err := fetchCoinPricesByFiats([]string{currency})
+	price, err := fetchCoinGeckoPrices([]string{currency})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": err.Error(),
@@ -74,143 +174,39 @@ func handleBitcoinPriceByCurrency(c *fiber.Ctx) error {
 		"price": price,
 	})
 }
-func fetchBinancePrice() (float64, error) {
-	resp, err := http.Get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, err
-	}
-
-	var result BinanceResponse
-	err = json.Unmarshal(body, &result)
-	if err != nil {
-		return 0, err
-	}
-
-	price, err := strconv.ParseFloat(result.Price, 64)
-	if err != nil {
-		return 0, err
-	}
-
-	return price, nil
-}
-
-/*
-	 func fetchBitcoinPrice(apiIndex int) (float64, int, error) {
-		apis := []func() (float64, error){
-			fetchCoinGeckoPrice,
-			fetchBinancePrice,
-		}
-
-		for i := 0; i < len(apis); i++ {
-			index := (apiIndex + i) % len(apis)
-			price, err := apis[index]()
-			if err == nil {
-				return price, (index + 1) % len(apis), nil
-			}
-			fmt.Println("Error fetching price from API", index, ":", err)
-		}
-
-		return 0, apiIndex, fmt.Errorf("all API calls failed")
-	}
-*/
 func pullBitcoinPrices() {
 	// Define supported currencies
-	supportedCurrencies := []string{"usd", "eur", "gbp", "jpy", "aud", "cad", "chf"}
 
 	// Fetch the initial Bitcoin rates immediately
-	prices, err := fetchCoinPricesByFiats(supportedCurrencies)
+	apiIndex := 0
+	prices, newIndex, err := fetchBitcoinPrice(apiIndex, supportedCurrencies)
 	if err != nil {
 		fmt.Println("Error fetching initial prices:", err)
 	} else {
+
 		for currency, price := range prices {
 			fmt.Printf("Initial Bitcoin Price in %s: $%.2f\n", currency, price)
+			apiIndex = newIndex
 			saveBitcoinRate(currency, price)
 		}
-	}
-
-	// Set up the ticker for subsequent fetches
+	} // Set up the ticker for subsequent fetches
 	ticker := time.NewTicker(7 * time.Minute)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		prices, err := fetchCoinPricesByFiats(supportedCurrencies)
+		prices, newIndex, err := fetchBitcoinPrice(apiIndex, supportedCurrencies)
 		if err != nil {
 			fmt.Println("Error fetching prices:", err)
 		} else {
 			for currency, price := range prices {
 				fmt.Printf("Bitcoin Price in %s: $%.2f\n", currency, price)
+				apiIndex = newIndex
 				saveBitcoinRate(currency, price)
 			}
 		}
 	}
 }
-
-/* func pullBitcoinPrice() {
-	// Fetch the initial Bitcoin rate immediately
-	apiIndex := 0
-	price, newIndex, err := fetchBitcoinPrice(apiIndex)
-	if err != nil {
-		fmt.Println("Error:", err)
-	} else {
-		fmt.Printf("Initial Bitcoin Price from APIs: $%.2f\n", price)
-		apiIndex = newIndex
-		saveBitcoinRate(price)
-	}
-
-	// Set up the ticker for subsequent fetches
-	ticker := time.NewTicker(7 * time.Minute)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		price, newIndex, err := fetchBitcoinPrice(apiIndex)
-		if err != nil {
-			fmt.Println("Error:", err)
-		} else {
-			fmt.Printf("Bitcoin Price from APIs: $%.2f\n", price)
-			apiIndex = newIndex
-			saveBitcoinRate(price)
-		}
-	}
-}
-*/
-/* func saveBitcoinRate(currency string, rate float64) {
-	db, err := graviton.InitGorm()
-	if err != nil {
-		log.Printf("Failed to connect to the database: %v", err)
-		return
-	}
-
-	var latestBitcoinRate types.BitcoinRate
-	result := db.Where("currency = ?", currency).Order("timestamp desc").First(&latestBitcoinRate)
-
-	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
-		log.Printf("Error querying bitcoin rate: %v", result.Error)
-		return
-	}
-
-	if result.Error == nil && latestBitcoinRate.Rate == rate {
-		fmt.Println("Rate is the same as the latest entry, no update needed")
-		return
-	}
-
-	newRate := types.BitcoinRate{
-		Rate:      rate,
-		Currency:  currency,
-		Timestamp: time.Now(),
-	}
-	if err := db.Create(&newRate).Error; err != nil {
-		log.Printf("Error saving new rate: %v", err)
-		return
-	}
-
-	fmt.Println("Bitcoin rate updated successfully for currency", currency)
-} */
 
 func saveBitcoinRate(currency string, rate float64) {
 	db, err := graviton.InitGorm()

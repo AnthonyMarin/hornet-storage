@@ -26,7 +26,7 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 
 	// Get the latest 10 transactions
 	var transactions []types.WalletTransactions
-	result := db.Order("date desc").Limit(10).Find(&transactions)
+	result := db.Order("date desc").Limit(-1).Find(&transactions)
 
 	if result.Error != nil {
 		log.Printf("Error querying transactions: %v", result.Error)
@@ -53,9 +53,9 @@ func handleLatestTransactions(c *fiber.Ctx) error {
 	var responseTransactions []TransactionResponse
 	// Process each transaction to convert the value to USD and add Satoshi value
 	for _, transaction := range transactions {
-		satoshis, err := strconv.ParseInt(transaction.Value, 10, 64)
+		satoshis, err := strconv.ParseInt(transaction.Value, 64)
 		if err != nil {
-			log.Printf("Error converting value to int64: %v", err)
+			log.Printf("Error converting value to float64: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Conversion error",
 			})
